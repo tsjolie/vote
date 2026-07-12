@@ -17,7 +17,7 @@ spec:
   primaryUpdateStrategy: unsupervised
   storage:
     size: 5Gi
-    storageClass: <STORAGE_CLASS_FOR_DB>
+    storageClass: nfs-client
   bootstrap:
     initdb:
       database: app

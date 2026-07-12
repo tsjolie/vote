@@ -114,18 +114,17 @@ docker build -t "$REGISTRY/vote:$TAG" .
 docker push "$REGISTRY/vote:$TAG"
 ```
 
-### 2. Fill in the placeholders in `deploy/vote.yaml`
+### 2. Fill in the image placeholder in `deploy/vote.yaml`
 
 | Placeholder                 | Meaning                                                        |
 | --------------------------- | ------------------------------------------------------------- |
 | `<REGISTRY>/vote:<TAG>`     | The image you just pushed (appears twice: init + app).        |
-| `<STORAGE_CLASS_FOR_DB>`    | StorageClass for the Postgres PVC — use the **`nfs-client`** class on this cluster. |
 
-Everything else follows cluster conventions and needs no changes.
+The Postgres PVC uses the cluster's `nfs-client` StorageClass, already set in the
+manifest. Everything else follows cluster conventions and needs no changes.
 
 ```bash
 sed -i "s#<REGISTRY>/vote:<TAG>#$REGISTRY/vote:$TAG#g" deploy/vote.yaml
-sed -i "s#<STORAGE_CLASS_FOR_DB>#nfs-client#g" deploy/vote.yaml
 ```
 
 ### 3. Apply
