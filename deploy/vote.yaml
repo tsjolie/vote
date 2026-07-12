@@ -1,0 +1,140 @@
+---
+# 1. Namespace (per-app namespace convention).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vote
+---
+# 2. CloudNativePG cluster. Generates the `vote-db-app` secret consumed below.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: vote-db
+  namespace: vote
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+  primaryUpdateStrategy: unsupervised
+  storage:
+    size: 5Gi
+    storageClass: <STORAGE_CLASS_FOR_DB>
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+---
+# 3a. Non-secret app configuration.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vote-config
+  namespace: vote
+data:
+  ENVIRONMENT: "production"
+  COOKIE_SECURE: "true"
+  STATIC_DIR: "/app/static"
+  SESSION_TTL_DAYS: "30"
+  TZ: "America/New_York"
+---
+# 3b. No app-managed secret is needed: DB credentials come from the
+# CNPG-generated `vote-db-app` secret (key `uri`), referenced by the Deployment.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vote
+  namespace: vote
+  labels:
+    app: vote
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vote
+  template:
+    metadata:
+      labels:
+        app: vote
+    spec:
+      initContainers:
+        - name: migrate
+          image: <REGISTRY>/vote:<TAG>
+          command: ["alembic", "upgrade", "head"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: vote-db-app
+                  key: uri
+            - name: TZ
+              valueFrom:
+                configMapKeyRef:
+                  name: vote-config
+                  key: TZ
+      containers:
+        - name: vote
+          image: <REGISTRY>/vote:<TAG>
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: vote-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: vote-db-app
+                  key: uri
+          readinessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# 5. ClusterIP service (HTTP behind Traefik; no LoadBalancer).
+apiVersion: v1
+kind: Service
+metadata:
+  name: vote
+  namespace: vote
+  labels:
+    app: vote
+spec:
+  type: ClusterIP
+  selector:
+    app: vote
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+---
+# 6. Traefik v3 IngressRoute, in the SAME namespace as the Service.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: vote
+  namespace: vote
+spec:
+  entryPoints:
+    - websecure
+    - localsecure
+  routes:
+    - kind: Rule
+      match: Host(`vote.sjolie.net`)
+      services:
+        - name: vote
+          port: 80
+  tls: {}
